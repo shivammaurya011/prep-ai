@@ -3,12 +3,12 @@
 import React, { useEffect, useState } from "react";
 import { FaWifi, FaExclamationTriangle, FaTimesCircle } from "react-icons/fa";
 
-function NetworkStatus() {
+function NetworkSpeed() {
   const [speed, setSpeed] = useState(null);
   const [status, setStatus] = useState("Checking...");
   const [color, setColor] = useState("text-gray-800");
   const [networkType, setNetworkType] = useState("Unknown");
-  const [isOnline, setIsOnline] = useState(true); // Default to true
+  const [isOnline, setIsOnline] = useState(true);
   const [unstable, setUnstable] = useState(false);
 
   useEffect(() => {
@@ -69,23 +69,23 @@ function NetworkStatus() {
   }, []);
 
   return (
-    <div className={`flex items-center space-x-2 ${color} font-semibold`}>
+    <div className="flex items-center space-x-3 bg-white px-4 py-2 rounded-full shadow-md border border-gray-200">
       {isOnline ? (
         <>
-          <FaWifi className={`text-4xl ${color}`} />
-          <p>
+          <FaWifi className={`text-2xl ${color} transition-all`} />
+          <p className="text-sm text-gray-500 font-semibold">
             {status} {speed !== null ? `(${speed} Mbps)` : ""} - {networkType}
           </p>
-          {unstable && <FaExclamationTriangle className="text-yellow-500 text-2xl" title="Unstable Network" />}
+          {unstable && <FaExclamationTriangle className="text-yellow-500 text-lg" title="Unstable Network" />}
         </>
       ) : (
         <>
-          <FaTimesCircle className="text-4xl text-red-600" />
-          <p>No Internet</p>
+          <FaTimesCircle className="text-2xl text-red-600" />
+          <p className="text-sm font-semibold text-red-600">No Internet</p>
         </>
       )}
     </div>
   );
 }
 
-export default NetworkStatus;
+export default NetworkSpeed;
