@@ -26,6 +26,7 @@ function InterviewPage() {
   const silenceTimeoutRef = useRef(null);
   const videoRef = useRef(null);
   const proceedToNextQuestionRef = useRef(() => {});
+  const isRecognitionActive = useRef(false); // Track recognition state
 
   // Initialize camera
   const initializeCamera = useCallback(async () => {
@@ -100,18 +101,6 @@ function InterviewPage() {
     recognition.interimResults = false;
     recognition.lang = "en-US";
 
-    let isRecognizing = false; 
-
-    function startRecognition() {
-        if (isRecognizing) {
-            console.warn("Recognition is already running.");
-            return;
-        }
-
-        isRecognizing = true;
-        recognition.start();
-    }
-  
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results)
         .map(result => result[0].transcript)
@@ -122,7 +111,6 @@ function InterviewPage() {
           ...prev, 
           { speaker: "You", text: transcript }
         ]);
-        setIsIntervieweeSpeaking(false);
   
         clearTimeout(silenceTimeoutRef.current);
         silenceTimeoutRef.current = setTimeout(() => {
@@ -131,24 +119,17 @@ function InterviewPage() {
       }
     };
   
-    recognition.onstart = () => setIsIntervieweeSpeaking(true);
+    recognition.onstart = () => {
+      setIsIntervieweeSpeaking(true);
+      isRecognitionActive.current = true;
+    };
   
     recognition.onend = () => {
-      setIsIntervieweeSpeaking(false);
-      setTimeout(() => {
-        if (!isInterviewerSpeaking && !recognition.isStarted) {
-          try {
-            recognition.start(); 
-          } catch (error) {
-            console.error('Recognition restart error:', error);
-          }
-        }
-      }, 1000);
+      isRecognitionActive.current = false;
     };
   
     speechRecognitionRef.current = recognition;
   }, []);
-  
 
   useEffect(() => {
     if (isLoadingQuestions || currentQuestionIndex < 0 || !questions.length) return;
@@ -156,7 +137,14 @@ function InterviewPage() {
     const currentQuestion = questions[currentQuestionIndex];
     const utterance = new SpeechSynthesisUtterance(currentQuestion.question);
     
-    utterance.onstart = () => setIsInterviewerSpeaking(true);
+    utterance.onstart = () => {
+      setIsInterviewerSpeaking(true);
+      // Stop recognition when interviewer starts speaking
+      if (speechRecognitionRef.current && isRecognitionActive.current) {
+        speechRecognitionRef.current.stop();
+      }
+    };
+
     utterance.onend = () => {
       setIsInterviewerSpeaking(false);
       setConversationHistory(prev => [...prev, {
@@ -167,10 +155,12 @@ function InterviewPage() {
       if (currentQuestionIndex < questions.length - 1) {
         silenceTimeoutRef.current = setTimeout(proceedToNextQuestion, 10000);
         
-        // Start recognition without stopping
+        // Start recognition if not active
         setTimeout(() => {
           try {
-            speechRecognitionRef.current?.start();
+            if (!isRecognitionActive.current) {
+              speechRecognitionRef.current?.start();
+            }
           } catch (error) {
             console.error('Failed to start recognition:', error);
           }
@@ -190,14 +180,16 @@ function InterviewPage() {
     if (!speechRecognitionRef.current) {
       initializeSpeechRecognition();
     }
-    if (speechRecognitionRef.current && !isIntervieweeSpeaking) {
+    // Start recognition only if not active
+    if (speechRecognitionRef.current && !isRecognitionActive.current) {
       try {
         speechRecognitionRef.current.start();
+        isRecognitionActive.current = true;
       } catch (error) {
         console.error('Speech recognition start error:', error);
       }
     }    
-  }, []);
+  }, [initializeSpeechRecognition]);
 
   // Start interview
   useEffect(() => {
@@ -205,7 +197,6 @@ function InterviewPage() {
       setCurrentQuestionIndex(0);
     }
   }, [isLoadingQuestions, questions]);
-   console.log('conversationHistory', conversationHistory);
 
   // Panel resizing logic
   const handlePanelResize = {
