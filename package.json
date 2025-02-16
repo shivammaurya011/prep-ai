@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "concurrently \"nodemon server.js --exec node\" \"next dev --turbopack\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -16,11 +16,13 @@
     "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
     "clsx": "^2.1.1",
+    "express": "^4.21.2",
     "framer-motion": "^12.0.6",
     "heroicons": "^2.2.0",
     "mongoose": "^8.9.5",
     "next": "15.1.6",
     "next-auth": "^4.24.11",
+    "nodemon": "^3.1.9",
     "ollama": "^0.5.12",
     "openai": "^4.81.0",
     "react": "^19.0.0",
@@ -29,10 +31,13 @@
     "react-icons": "^5.4.0",
     "react-loading-skeleton": "^3.5.0",
     "react-webcam": "^7.2.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
     "uuid": "^11.0.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "concurrently": "^9.1.2",
     "eslint": "^9",
     "eslint-config-next": "15.1.6",
     "postcss": "^8",

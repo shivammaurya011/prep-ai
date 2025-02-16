@@ -1,6 +1,6 @@
 import { HfInference } from '@huggingface/inference';
 
-const hf = new HfInference(process.env.HUGGINGFACE_TOKEN);
+const hf = new HfInference(process.env.HF_API_KEY);
 
 export async function GET(request) {
   const searchParams = new URL(request.url).searchParams;

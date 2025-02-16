@@ -1,16 +1,14 @@
 'use client';
-import React, { 
-  useState, 
-  useEffect, 
-  useCallback, 
-  useRef 
-} from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { FiCamera, FiMic, FiMicOff, FiTwitch } from "react-icons/fi";
-import { FaMicrophoneAlt,  FaRegTimesCircle, FaSearchengin, FaMicrophoneAltSlash } from 'react-icons/fa';
+import { FaRegTimesCircle, FaSearchengin } from 'react-icons/fa';
 import Image from "next/image";
+import { initializeSocket } from "@/lib/socket";
+import { getSession } from "next-auth/react";
 
 function InterviewPage() {
-  // State declarations
+  const [socket, setSocket] = useState(null);
+  const [userId, setUser] = useState('');
   const [questions, setQuestions] = useState([]);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [leftPanelWidth, setLeftPanelWidth] = useState(75);
@@ -20,16 +18,76 @@ function InterviewPage() {
   const [isIntervieweeSpeaking, setIsIntervieweeSpeaking] = useState(false);
   const [isInterviewerSpeaking, setIsInterviewerSpeaking] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
+  const [interviewStatus, setInterviewStatus] = useState("pending");
 
   // Refs
   const messagesEndRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const silenceTimeoutRef = useRef(null);
   const videoRef = useRef(null);
-  const proceedToNextQuestionRef = useRef(() => {});
   const isRecognitionActive = useRef(false);
 
-  // Initialize camera
+  // Initialize Socket connection
+  useEffect(() => {
+    const newSocket = initializeSocket(userId);
+    setSocket(newSocket);
+    newSocket.connect();
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, [userId]);
+
+  // Socket event handlers
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleQuestion = (question) => {
+      setQuestions(prev => [...prev, question]);
+      setCurrentQuestionIndex(prev => prev + 1);
+      setIsLoadingQuestions(false);
+    };
+
+    const handleResume = (session) => {
+      setQuestions(session.questions);
+      setCurrentQuestionIndex(session.index);
+      setConversationHistory(session.answers.map(answer => ({
+        speaker: "You",
+        text: answer
+      })));
+      setIsLoadingQuestions(false);
+    };
+
+    const handleInterviewComplete = () => {
+      setInterviewStatus("completed");
+      window.speechSynthesis.cancel();
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+      }
+    };
+
+    const handleInterviewTimeout = () => {
+      setInterviewStatus("timed-out");
+      window.speechSynthesis.cancel();
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+      }
+    };
+
+    socket.on('askQuestion', handleQuestion);
+    socket.on('resumeInterview', handleResume);
+    socket.on('interviewComplete', handleInterviewComplete);
+    socket.on('interviewTimeout', handleInterviewTimeout);
+
+    return () => {
+      socket.off('askQuestion', handleQuestion);
+      socket.off('resumeInterview', handleResume);
+      socket.off('interviewComplete', handleInterviewComplete);
+      socket.off('interviewTimeout', handleInterviewTimeout);
+    };
+  }, [socket]);
+
+  // Initialize camera and start interview
   const initializeCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -40,10 +98,15 @@ function InterviewPage() {
         videoRef.current.srcObject = stream;
       }
       setCameraStream(stream);
+      // Start interview after camera initialization
+      socket?.emit('startInterview', { 
+        userId,
+        context: 'HTML and CSS'
+      });
     } catch (error) {
       console.error("Camera access error:", error);
     }
-  }, []);
+  }, [socket, userId]);
 
   // Conversation auto-scroll
   const scrollToBottom = useCallback(() => {
@@ -51,28 +114,18 @@ function InterviewPage() {
   }, []);
 
   useEffect(() => {
+    const fetchSession = async () => {
+      const sessionData = await getSession();
+      setUser(sessionData.user?.id)
+    }
+    fetchSession();
+  }, [])
+
+  useEffect(() => {
     scrollToBottom();
   }, [conversationHistory]);
 
-  // Fetch questions
-  const fetchInterviewQuestions = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/generate-questions?topic=${encodeURIComponent('MERN Stack')}`);
-      const data = await response.json();
-      console.log('Questions:', data.questions);
-      setQuestions([
-        { id: -1, question: "Welcome! Let's begin. Please introduce yourself." },
-        ...data.questions
-      ]);
-    } catch (error) {
-      console.error("Question fetch failed:", error);
-    } finally {
-      setIsLoadingQuestions(false);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchInterviewQuestions();
     initializeCamera();
     
     return () => {
@@ -80,20 +133,9 @@ function InterviewPage() {
         cameraStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [initializeCamera]);
 
-  // Interview flow control
-  const proceedToNextQuestion = useCallback(() => {
-    setCurrentQuestionIndex(prev => {
-      if (prev < questions.length - 1) return prev + 1;
-      return prev;
-    });
-  }, [questions.length]);
-
-  useEffect(() => {
-    proceedToNextQuestionRef.current = proceedToNextQuestion;
-  }, [proceedToNextQuestion]);
-
+  // Speech recognition handlers
   const initializeSpeechRecognition = useCallback(() => {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) return;
@@ -101,7 +143,7 @@ function InterviewPage() {
     const recognition = new Recognition();
     recognition.continuous = true;
     recognition.interimResults = false;
-    recognition.lang = "en-US";
+    recognition.lang = "en-IN";
 
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results)
@@ -113,11 +155,14 @@ function InterviewPage() {
           ...prev, 
           { speaker: "You", text: transcript }
         ]);
-  
+        
+        // Send answer to server
+        socket?.emit('sendAnswer', {
+          userId,
+          answer: transcript
+        });
+
         clearTimeout(silenceTimeoutRef.current);
-        silenceTimeoutRef.current = setTimeout(() => {
-          if (!isIntervieweeSpeaking) proceedToNextQuestionRef.current();
-        }, 3000); 
       }
     };
   
@@ -127,12 +172,14 @@ function InterviewPage() {
     };
   
     recognition.onend = () => {
+      setIsIntervieweeSpeaking(false);
       isRecognitionActive.current = false;
     };
   
     speechRecognitionRef.current = recognition;
-  }, []);
+  }, [socket, userId]);
 
+  // Question handling
   useEffect(() => {
     if (isLoadingQuestions || currentQuestionIndex < 0 || !questions.length) return;
   
@@ -152,52 +199,32 @@ function InterviewPage() {
         speaker: "Interviewer",
         text: currentQuestion.question
       }]);
-  
-      if (currentQuestionIndex < questions.length - 1) {
-        silenceTimeoutRef.current = setTimeout(proceedToNextQuestion, 10000);
-        
-        // Start recognition if not active
-        setTimeout(() => {
-          try {
-            if (!isRecognitionActive.current) {
-              speechRecognitionRef.current?.start();
-            }
-          } catch (error) {
-            console.error('Failed to start recognition:', error);
+      
+      // Start recognition after question ends
+      setTimeout(() => {
+        try {
+          if (!isRecognitionActive.current && interviewStatus === "active") {
+            speechRecognitionRef.current?.start();
           }
-        }, 500);
-      }
+        } catch (error) {
+          console.error('Failed to start recognition:', error);
+        }
+      }, 500);
     };
   
     window.speechSynthesis.speak(utterance);
   
     return () => {
       window.speechSynthesis.cancel();
-      clearTimeout(silenceTimeoutRef.current);
     };
-  }, [currentQuestionIndex, isLoadingQuestions, questions]);
+  }, [currentQuestionIndex, isLoadingQuestions, questions, interviewStatus]);
 
+  // Initialize speech recognition
   useEffect(() => {
     if (!speechRecognitionRef.current) {
       initializeSpeechRecognition();
     }
-    // Start recognition only if not active
-    if (speechRecognitionRef.current && !isRecognitionActive.current) {
-      try {
-        speechRecognitionRef.current.start();
-        isRecognitionActive.current = true;
-      } catch (error) {
-        console.error('Speech recognition start error:', error);
-      }
-    }    
   }, [initializeSpeechRecognition]);
-
-  // Start interview
-  useEffect(() => {
-    if (!isLoadingQuestions && questions.length > 0 && currentQuestionIndex === -1) {
-      setCurrentQuestionIndex(0);
-    }
-  }, [isLoadingQuestions, questions]);
 
   // Panel resizing logic
   const handlePanelResize = {
@@ -225,6 +252,31 @@ function InterviewPage() {
     };
   }, [isResizingPanel, handlePanelResize]);
 
+  // Handle interview completion
+  const handleFinishInterview = () => {
+    if (interviewStatus === "completed") return;
+    
+    socket?.emit('completeInterview', { userId });
+    setInterviewStatus("completed");
+    window.speechSynthesis.cancel();
+    
+    if (speechRecognitionRef.current) {
+      speechRecognitionRef.current.stop();
+    }
+  };
+
+  // Toggle microphone
+  const toggleMicrophone = () => {
+    setIsIntervieweeSpeaking(prev => {
+      if (prev) {
+        speechRecognitionRef.current?.stop();
+      } else {
+        speechRecognitionRef.current?.start();
+      }
+      return !prev;
+    });
+  };
+
   return (
     <>
     <main className="flex-grow flex overflow-hidden w-full" style={{ height: 'calc(100vh - 8rem)' }}>
@@ -245,6 +297,7 @@ function InterviewPage() {
         />
       </div>
       <div className="w-2 cursor-col-resize bg-gray-600" onMouseDown={handlePanelResize.start} />
+      
       {/* Conversation Panel */}
       <div style={{ width: `${100 - leftPanelWidth}%` }} className="bg-slate-200 flex flex-col">
         <div className="flex-1 overflow-y-auto p-4 pt-16 space-y-4">
@@ -264,7 +317,9 @@ function InterviewPage() {
       noOfQuestion={questions.length}
       currentQuestionIndex={currentQuestionIndex}
       isIntervieweeSpeaking={isIntervieweeSpeaking}
-      setIsIntervieweeSpeaking={setIsIntervieweeSpeaking}
+      setIsIntervieweeSpeaking={toggleMicrophone}
+      onFinish={handleFinishInterview}
+      interviewStatus={interviewStatus}
     />
     </>
   );
@@ -304,39 +359,55 @@ const ConversationBubble = ({ speaker, text }) => (
   </div>
 );
 
-const FooterControls = ({setIsIntervieweeSpeaking, isIntervieweeSpeaking, noOfQuestion, currentQuestionIndex}) => (
+const FooterControls = ({ 
+  setIsIntervieweeSpeaking, 
+  isIntervieweeSpeaking, 
+  noOfQuestion, 
+  currentQuestionIndex, 
+  onFinish,
+  interviewStatus 
+}) => (
   <footer className="flex justify-between items-center bg-white shadow-md px-8 py-4">
-        <a href="https://forms.gle/fDW42kWP16gCAYSk7" target="_blank" className="bg-green-100 hover:bg-green-200 text-gray-600 flex items-center gap-2 font-medium px-6 py-3 rounded-lg">
-          <FaSearchengin className="text-xl text-green-600" />
-          <span className="text-basic">Having Issue?</span>
-        </a>
+    <a href="https://forms.gle/fDW42kWP16gCAYSk7" target="_blank" className="bg-green-100 hover:bg-green-200 text-gray-600 flex items-center gap-2 font-medium px-6 py-3 rounded-lg">
+      <FaSearchengin className="text-xl text-green-600" />
+      <span className="text-basic">Having Issue?</span>
+    </a>
 
-        <button className="bg-green-100 hover:bg-green-200 text-green-600 font-medium text-base px-6 py-3 rounded-lg">
-          { (noOfQuestion === currentQuestionIndex) ? "Finish" : "Next Question"}
-        </button>
+    <button 
+      className={`${
+        interviewStatus === "completed" 
+          ? "bg-gray-300 cursor-not-allowed" 
+          : "bg-green-100 hover:bg-green-200"
+      } text-green-600 font-medium text-base px-6 py-3 rounded-lg`}
+      onClick={onFinish}
+      disabled={interviewStatus === "completed"}
+    >
+      {interviewStatus === "completed" ? "Completed" : 
+       (noOfQuestion === currentQuestionIndex + 1) ? "Finish" : "Next Question"}
+    </button>
 
-        <div className="flex items-center space-x-3">
-          
-          <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
-            <FiCamera className="text-2xl" />
-          </button>
-          <button
-            className={`${isIntervieweeSpeaking ? 'bg-green-100 hover:bg-green-200 text-green-600' : 'bg-red-100 text-red-600'} flex items-center justify-center w-12 h-12 rounded-lg shadow-md transition `}
-            onClick={() => {setIsIntervieweeSpeaking(prev => !prev)}}
-          >
-           {isIntervieweeSpeaking ?  <FiMic className="text-2xl" /> : <FiMicOff  className="text-2xl" />}
-          </button>
-
-          <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
-            <FiTwitch className="text-2xl" />
-          </button>
-          
-          <button className="bg-red-100 text-red-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-red-200 transition">
-            <FaRegTimesCircle className="text-2xl" />
-          </button>
-        </div>
-        
-      </footer>
-)
+    <div className="flex items-center space-x-3">
+      <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
+        <FiCamera className="text-2xl" />
+      </button>
+      <button
+        className={`${
+          isIntervieweeSpeaking 
+            ? 'bg-green-100 hover:bg-green-200 text-green-600' 
+            : 'bg-red-100 text-red-600'
+        } flex items-center justify-center w-12 h-12 rounded-lg shadow-md transition`}
+        onClick={setIsIntervieweeSpeaking}
+      >
+        {isIntervieweeSpeaking ? <FiMic className="text-2xl" /> : <FiMicOff className="text-2xl" />}
+      </button>
+      <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
+        <FiTwitch className="text-2xl" />
+      </button>
+      <button className="bg-red-100 text-red-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-red-200 transition">
+        <FaRegTimesCircle className="text-2xl" />
+      </button>
+    </div>
+  </footer>
+);
 
 export default InterviewPage;
