@@ -22,7 +22,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Header */}
       <nav className="bg-white shadow-lg fixed w-full z-20">
-        <div className="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center">
           <Link href="/" className="text-4xl font-bold text-green-600 hover:text-green-800 transition-all flex items-center space-x-1">
             <span className="tracking-wide">prep</span><span className="font-extrabold text-green-800">AI</span>
           </Link>

@@ -1,413 +1,247 @@
-'use client';
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { FiCamera, FiMic, FiMicOff, FiTwitch } from "react-icons/fi";
-import { FaRegTimesCircle, FaSearchengin } from 'react-icons/fa';
-import Image from "next/image";
-import { initializeSocket } from "@/lib/socket";
+"use client";
 import { getSession } from "next-auth/react";
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { FaCalendarAlt, FaTrash, FaPlayCircle, FaCheckCircle, FaPlus } from "react-icons/fa";
+import CreateInterview from "@/components/modal/CreateInterview";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 
-function InterviewPage() {
-  const [socket, setSocket] = useState(null);
-  const [userId, setUser] = useState('');
-  const [questions, setQuestions] = useState([]);
-  const [conversationHistory, setConversationHistory] = useState([]);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(75);
-  const [isResizingPanel, setIsResizingPanel] = useState(false);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(-1);
-  const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
-  const [isIntervieweeSpeaking, setIsIntervieweeSpeaking] = useState(false);
-  const [isInterviewerSpeaking, setIsInterviewerSpeaking] = useState(false);
-  const [cameraStream, setCameraStream] = useState(null);
-  const [interviewStatus, setInterviewStatus] = useState("pending");
+export default function InterviewPage() {
+    const router = useRouter();
+    const [user, setUser] = useState(null);
+    const [interviews, setInterviews] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [newInterview, setNewInterview] = useState({ topic: "", date: "", level: "" });
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [interviewStats, setInterviewStats] = useState({ upcoming: 0, ongoing: 0, completed: 0, missed: 0 });
 
-  // Refs
-  const messagesEndRef = useRef(null);
-  const speechRecognitionRef = useRef(null);
-  const silenceTimeoutRef = useRef(null);
-  const videoRef = useRef(null);
-  const isRecognitionActive = useRef(false);
+    useEffect(() => {
+        const fetchSession = async () => {
+            const sessionData = await getSession();
+            setUser(sessionData?.user || null);
+            if (sessionData?.user?.id) {
+                fetchInterviews(sessionData.user.id);
+                getInterviewStats();
+            }
+        };
+        fetchSession();
+    }, []);
 
-  // Initialize Socket connection
-  useEffect(() => {
-    const newSocket = initializeSocket(userId);
-    setSocket(newSocket);
-    newSocket.connect();
-
-    return () => {
-      newSocket.disconnect();
-    };
-  }, [userId]);
-
-  // Socket event handlers
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleQuestion = (question) => {
-      setQuestions(prev => [...prev, question]);
-      setCurrentQuestionIndex(prev => prev + 1);
-      setIsLoadingQuestions(false);
-    };
-
-    const handleResume = (session) => {
-      setQuestions(session.questions);
-      setCurrentQuestionIndex(session.index);
-      setConversationHistory(session.answers.map(answer => ({
-        speaker: "You",
-        text: answer
-      })));
-      setIsLoadingQuestions(false);
-    };
-
-    const handleInterviewComplete = () => {
-      setInterviewStatus("completed");
-      window.speechSynthesis.cancel();
-      if (speechRecognitionRef.current) {
-        speechRecognitionRef.current.stop();
-      }
-    };
-
-    const handleInterviewTimeout = () => {
-      setInterviewStatus("timed-out");
-      window.speechSynthesis.cancel();
-      if (speechRecognitionRef.current) {
-        speechRecognitionRef.current.stop();
-      }
-    };
-
-    socket.on('askQuestion', handleQuestion);
-    socket.on('resumeInterview', handleResume);
-    socket.on('interviewComplete', handleInterviewComplete);
-    socket.on('interviewTimeout', handleInterviewTimeout);
-
-    return () => {
-      socket.off('askQuestion', handleQuestion);
-      socket.off('resumeInterview', handleResume);
-      socket.off('interviewComplete', handleInterviewComplete);
-      socket.off('interviewTimeout', handleInterviewTimeout);
-    };
-  }, [socket]);
-
-  // Initialize camera and start interview
-  const initializeCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "user" },
-        audio: true 
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setCameraStream(stream);
-      // Start interview after camera initialization
-      socket?.emit('startInterview', { 
-        userId,
-        context: 'HTML and CSS'
-      });
-    } catch (error) {
-      console.error("Camera access error:", error);
-    }
-  }, [socket, userId]);
-
-  // Conversation auto-scroll
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
-  useEffect(() => {
-    const fetchSession = async () => {
-      const sessionData = await getSession();
-      setUser(sessionData.user?.id)
-    }
-    fetchSession();
-  }, [])
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [conversationHistory]);
-
-  useEffect(() => {
-    initializeCamera();
-    
-    return () => {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [initializeCamera]);
-
-  // Speech recognition handlers
-  const initializeSpeechRecognition = useCallback(() => {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) return;
-  
-    const recognition = new Recognition();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = "en-IN";
-
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(result => result[0].transcript)
-        .join('');
-  
-      if (event.results[0].isFinal) {
-        setConversationHistory(prev => [
-          ...prev, 
-          { speaker: "You", text: transcript }
-        ]);
-        
-        // Send answer to server
-        socket?.emit('sendAnswer', {
-          userId,
-          answer: transcript
-        });
-
-        clearTimeout(silenceTimeoutRef.current);
-      }
-    };
-  
-    recognition.onstart = () => {
-      setIsIntervieweeSpeaking(true);
-      isRecognitionActive.current = true;
-    };
-  
-    recognition.onend = () => {
-      setIsIntervieweeSpeaking(false);
-      isRecognitionActive.current = false;
-    };
-  
-    speechRecognitionRef.current = recognition;
-  }, [socket, userId]);
-
-  // Question handling
-  useEffect(() => {
-    if (isLoadingQuestions || currentQuestionIndex < 0 || !questions.length) return;
-  
-    const currentQuestion = questions[currentQuestionIndex];
-    const utterance = new SpeechSynthesisUtterance(currentQuestion.question);
-    
-    utterance.onstart = () => {
-      setIsInterviewerSpeaking(true);
-      if (speechRecognitionRef.current && isRecognitionActive.current) {
-        speechRecognitionRef.current.stop();
-      }
-    };
-
-    utterance.onend = () => {
-      setIsInterviewerSpeaking(false);
-      setConversationHistory(prev => [...prev, {
-        speaker: "Interviewer",
-        text: currentQuestion.question
-      }]);
-      
-      // Start recognition after question ends
-      setTimeout(() => {
+    const fetchInterviews = async (userId) => {
         try {
-          if (!isRecognitionActive.current && interviewStatus === "active") {
-            speechRecognitionRef.current?.start();
-          }
+            const res = await axios.get(`/api/interview?userId=${userId}`);
+            setInterviews(res.data);
+            getInterviewStats(); // Update stats after fetching interviews
         } catch (error) {
-          console.error('Failed to start recognition:', error);
+            console.error("Error fetching interviews:", error);
+        } finally {
+            setLoading(false);
         }
-      }, 500);
     };
-  
-    window.speechSynthesis.speak(utterance);
-  
-    return () => {
-      window.speechSynthesis.cancel();
+
+    const createInterview = async () => {
+        if (!newInterview.topic || !newInterview.date || !newInterview.level) return alert("All fields required!");
+        try {
+            await axios.post("/api/interview", { ...newInterview, userId: user.id });
+            fetchInterviews(user.id);
+            setNewInterview({ topic: "", date: "", level: "" });
+            setIsModalOpen(false);
+        } catch (error) {
+            console.error("Error creating interview:", error);
+        }
     };
-  }, [currentQuestionIndex, isLoadingQuestions, questions, interviewStatus]);
 
-  // Initialize speech recognition
-  useEffect(() => {
-    if (!speechRecognitionRef.current) {
-      initializeSpeechRecognition();
-    }
-  }, [initializeSpeechRecognition]);
-
-  // Panel resizing logic
-  const handlePanelResize = {
-    start: () => setIsResizingPanel(true),
-    move: (e) => {
-      if (!isResizingPanel) return;
-      const newWidth = (e.clientX / window.innerWidth) * 100;
-      setLeftPanelWidth(Math.min(Math.max(newWidth, 35), 80));
-    },
-    end: () => setIsResizingPanel(false)
-  };
-
-  useEffect(() => {
-    const handleMouseMove = (e) => handlePanelResize.move(e);
-    const handleMouseUp = () => handlePanelResize.end();
-
-    if (isResizingPanel) {
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-    }
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
+    const updateInterview = async (id, status) => {
+        try {
+            await axios.put(`/api/interview/${id}`, { status });
+            fetchInterviews(user.id);
+        } catch (error) {
+            console.error("Error updating interview:", error);
+        }
     };
-  }, [isResizingPanel, handlePanelResize]);
 
-  // Handle interview completion
-  const handleFinishInterview = () => {
-    if (interviewStatus === "completed") return;
-    
-    socket?.emit('completeInterview', { userId });
-    setInterviewStatus("completed");
-    window.speechSynthesis.cancel();
-    
-    if (speechRecognitionRef.current) {
-      speechRecognitionRef.current.stop();
-    }
-  };
+    const deleteInterview = async (id) => {
+        if (!confirm("Are you sure you want to delete this interview?")) return;
+        try {
+            await axios.delete(`/api/interview/${id}`);
+            fetchInterviews(user.id);
+        } catch (error) {
+            console.error("Error deleting interview:", error);
+        }
+    };
 
-  // Toggle microphone
-  const toggleMicrophone = () => {
-    setIsIntervieweeSpeaking(prev => {
-      if (prev) {
-        speechRecognitionRef.current?.stop();
-      } else {
-        speechRecognitionRef.current?.start();
-      }
-      return !prev;
-    });
-  };
+    const getInterviewStats = () => {
+        const upcoming = interviews.filter((interview) => interview.status === "upcoming").length;
+        const ongoing = interviews.filter((interview) => interview.status === "ongoing").length;
+        const completed = interviews.filter((interview) => interview.status === "completed").length;
+        const missed = interviews.filter((interview) => interview.status === "missed").length;
+        setInterviewStats({ upcoming, ongoing, completed, missed });
+    };
 
-  return (
-    <>
-    <main className="flex-grow flex overflow-hidden w-full" style={{ height: 'calc(100vh - 8rem)' }}>
-      {/* Participants Panel */}
-      <div style={{ width: `${leftPanelWidth}%` }} className="bg-slate-200 flex items-center p-4 gap-4">
-        <ParticipantCard
-          role="Interviewer"
-          isSpeaking={isInterviewerSpeaking}
-          image="/images/interviewer.jpg"
-          status={isInterviewerSpeaking ? "Speaking..." : "Listening..."}
-        />
-        
-        <ParticipantCard
-          role="You"
-          isSpeaking={isIntervieweeSpeaking}
-          videoRef={videoRef}
-          status={isIntervieweeSpeaking ? "Speaking..." : "Listening..."}
-        />
-      </div>
-      <div className="w-2 cursor-col-resize bg-gray-600" onMouseDown={handlePanelResize.start} />
-      
-      {/* Conversation Panel */}
-      <div style={{ width: `${100 - leftPanelWidth}%` }} className="bg-slate-200 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-4 pt-16 space-y-4">
-          <div className="p-4 w-full shadow-md bg-green-50 text-green-500 fixed -m-4 -mt-16">Transcript</div>
-          {conversationHistory.map((entry, index) => (
-            <ConversationBubble
-              key={index}
-              speaker={entry.speaker}
-              text={entry.text}
-            />
-          ))}
-          <div ref={messagesEndRef} />
+    const handleStartInterview = (interview) => {
+        router.push(`/interview/${interview._id}`);
+        updateInterview(interview._id, "ongoing");
+    };
+
+    return (
+        <div className="min-h-screen flex bg-gray-50 p-6">
+            {/* Main Content */}
+            <div className="flex-1 pr-6">
+                {/* Welcome Message */}
+                <div className="mb-8 flex bg-gradient-to-r from-green-100 to-blue-100 rounded-xl shadow-md">
+                    <div className="w-1/2 p-8">
+                        <h1 className="text-3xl font-bold text-gray-900">Hey, {user?.name}</h1>
+                        <p className="text-gray-600 mt-2">
+                            Manage and track your interviews with ease. Schedule, update, and delete interviews all in one place.
+                        </p>
+                    </div>
+                    <div className="w-1/2 flex justify-end items-center">
+                        <Image src="/images/welcomIcon.png" width={200} height={200} alt="Interview" />
+                    </div>
+                </div>
+
+                {/* Interview List */}
+                <div>
+                    <h2 className="text-2xl font-semibold text-gray-800 mb-6">Your Interviews</h2>
+                    {loading ? (
+                        <div className="text-center py-10">
+                            <p className="text-lg text-gray-600">Loading your interviews...</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {interviews.map((interview) => (
+                                <div
+                                    key={interview._id}
+                                    className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:scale-105"
+                                >
+                                    <h3 className="text-2xl font-semibold text-gray-900 truncate">{interview.topic}</h3>
+
+                                    <div className="mt-4 space-y-2 text-gray-700">
+                                        <p className="flex items-center text-sm">
+                                            <FaCalendarAlt className="mr-2 text-gray-500" />
+                                            {new Date(interview.date).toLocaleString()}
+                                        </p>
+                                        <p className="text-sm font-medium">Level: <span className="font-normal text-gray-600">{interview.level}</span></p>
+                                        <p className="text-sm font-medium">Status: <span className={`font-normal ${interview.status === "completed" ? "text-green-500" : interview.status === "ongoing" ? "text-yellow-500" : "text-gray-600"}`}>{interview.status}</span></p>
+                                    </div>
+
+                                    <div className="flex item-center justify-between mt-6">
+                                        {interview.status === "upcoming" && (
+                                            <button
+                                                onClick={() => handleStartInterview(interview)}
+                                                className="flex items-center bg-green-400 text-white px-4 py-2 rounded-md hover:bg-green-500 transition duration-300 transform hover:scale-105"
+                                            >
+                                                <FaPlayCircle className="mr-2" />
+                                                Start
+                                            </button>
+                                        )}
+                                        {interview.status === "ongoing" && (
+                                            <button
+                                                onClick={() => updateInterview(interview._id, "completed")}
+                                                className="flex items-center bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600 transition duration-300 transform hover:scale-105"
+                                            >
+                                                <FaCheckCircle className="mr-2" />
+                                                Complete
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => deleteInterview(interview._id)}
+                                            className="flex items-center bg-red-400 text-white px-4 py-2 rounded-full hover:bg-red-400 transition duration-300 transform hover:scale-105"
+                                        >
+                                            <FaTrash />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Sidebar */}
+            <div className="w-1/4 flex flex-col gap-6">
+                {/* Create New Interview Button */}
+                <button
+                    onClick={() => setIsModalOpen(true)}
+                    className="flex items-center justify-center bg-green-600 text-white w-full py-3 rounded-xl shadow-md hover:bg-green-700 transition duration-200"
+                >
+                    <FaPlus className="mr-2" />
+                    Create New Interview
+                </button>
+
+                {/* Interview Stats */}
+                <div className="bg-white p-3 rounded-xl shadow-lg">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-4">Interview Stats</h2>
+                    <div className="space-y-3">
+                        {Object.entries(interviewStats).map(([key, value]) => (
+                            <div key={key} className="flex justify-between">
+                                <p className="text-gray-600 capitalize">{key}</p>
+                                <p className="text-gray-800 font-semibold">{value}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Activity */}
+                <div className="bg-white p-3 rounded-xl shadow-lg">
+                    <h2 className="text-xl font-semibold text-gray-800 mb-4">Activity</h2>
+                    <div className="space-y-3">
+                        <div className="flex justify-between">
+                            <p className="text-gray-600">Last Interview</p>
+                            <p className="text-gray-800 font-semibold">2 days ago</p>
+                        </div>
+                        <div className="flex justify-between">
+                            <p className="text-gray-600">Next Interview</p>
+                            <p className="text-gray-800 font-semibold">Tomorrow</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Modal for Creating Interview */}
+            <CreateInterview isOpen={isModalOpen} onRequestClose={() => setIsModalOpen(false)}>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-6">Schedule a New Interview</h2>
+                <div className="space-y-4">
+                    <input
+                        type="text"
+                        placeholder="Interview Topic"
+                        value={newInterview.topic}
+                        onChange={(e) => setNewInterview({ ...newInterview, topic: e.target.value })}
+                        className="w-full border border-gray-300 p-3 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <select
+                        value={newInterview.level}
+                        onChange={(e) => setNewInterview({ ...newInterview, level: e.target.value })}
+                        className="w-full border border-gray-300 p-3 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                        <option value=""> Select Level </option>
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                    </select>
+                    <input
+                        type="datetime-local"
+                        value={newInterview.date}
+                        onChange={(e) => setNewInterview({ ...newInterview, date: e.target.value })}
+                        className="w-full border border-gray-300 p-3 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                </div>
+                <div className="flex justify-between items-center mt-8">
+                    <button
+                        onClick={() => setIsModalOpen(false)}
+                        className="bg-gray-300 text-black px-6 py-3 rounded-md shadow-md hover:bg-gray-400 transition duration-200"
+                    >
+                        Close
+                    </button>
+                    <button
+                        onClick={createInterview}
+                        className="bg-indigo-600 text-white px-6 py-3 rounded-md shadow-md hover:bg-indigo-700 transition duration-200"
+                    >
+                        Create Interview
+                    </button>
+                </div>
+            </CreateInterview>
         </div>
-      </div>
-    </main>
-    <FooterControls 
-      noOfQuestion={questions.length}
-      currentQuestionIndex={currentQuestionIndex}
-      isIntervieweeSpeaking={isIntervieweeSpeaking}
-      setIsIntervieweeSpeaking={toggleMicrophone}
-      onFinish={handleFinishInterview}
-      interviewStatus={interviewStatus}
-    />
-    </>
-  );
+    );
 }
-
-const ParticipantCard = ({ role, isSpeaking, image, status, videoRef }) => (
-  <div className="h-96 w-1/2 flex flex-col justify-center items-center bg-gray-500 rounded-lg shadow-md relative">
-    <div className="absolute top-2 right-2 text-sm text-white bg-black/50 px-2 py-1 rounded">
-      {status}
-    </div>
-    <div className={`h-60 w-60 bg-gray-300 rounded-full overflow-hidden border-4 ${
-      isSpeaking ? "border-green-500" : "border-transparent"
-    }`}>
-      {role === "Interviewer" ? (
-        <Image src={image} alt={role} width={240} height={240} className="h-full w-full object-cover" />
-      ) : (
-        <video ref={videoRef} autoPlay muted className="h-full w-full object-cover scale-x-[-1]" />
-      )}
-    </div>
-    <div className="absolute bottom-0 left-0 right-0 p-4 flex items-center gap-2 bg-black/50">
-      {isSpeaking ? (
-        <FiMic className="text-2xl text-green-500 animate-pulse" />
-      ) : (
-        <FiMicOff className="text-2xl text-red-500" />
-      )}
-      <p className="text-white font-semibold">{role}</p>
-    </div>
-  </div>
-);
-
-const ConversationBubble = ({ speaker, text }) => (
-  <div className={`p-4 rounded-lg shadow-md max-w-[80%] mb-4 ${
-    speaker === "Interviewer" ? "bg-white" : "bg-blue-50 ml-auto"
-  }`}>
-    <span className="font-semibold text-green-600">{speaker}:</span>
-    <p className="text-gray-800 mt-1">{text}</p>
-  </div>
-);
-
-const FooterControls = ({ 
-  setIsIntervieweeSpeaking, 
-  isIntervieweeSpeaking, 
-  noOfQuestion, 
-  currentQuestionIndex, 
-  onFinish,
-  interviewStatus 
-}) => (
-  <footer className="flex justify-between items-center bg-white shadow-md px-8 py-4">
-    <a href="https://forms.gle/fDW42kWP16gCAYSk7" target="_blank" className="bg-green-100 hover:bg-green-200 text-gray-600 flex items-center gap-2 font-medium px-6 py-3 rounded-lg">
-      <FaSearchengin className="text-xl text-green-600" />
-      <span className="text-basic">Having Issue?</span>
-    </a>
-
-    <button 
-      className={`${
-        interviewStatus === "completed" 
-          ? "bg-gray-300 cursor-not-allowed" 
-          : "bg-green-100 hover:bg-green-200"
-      } text-green-600 font-medium text-base px-6 py-3 rounded-lg`}
-      onClick={onFinish}
-      disabled={interviewStatus === "completed"}
-    >
-      {interviewStatus === "completed" ? "Completed" : 
-       (noOfQuestion === currentQuestionIndex + 1) ? "Finish" : "Next Question"}
-    </button>
-
-    <div className="flex items-center space-x-3">
-      <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
-        <FiCamera className="text-2xl" />
-      </button>
-      <button
-        className={`${
-          isIntervieweeSpeaking 
-            ? 'bg-green-100 hover:bg-green-200 text-green-600' 
-            : 'bg-red-100 text-red-600'
-        } flex items-center justify-center w-12 h-12 rounded-lg shadow-md transition`}
-        onClick={setIsIntervieweeSpeaking}
-      >
-        {isIntervieweeSpeaking ? <FiMic className="text-2xl" /> : <FiMicOff className="text-2xl" />}
-      </button>
-      <button className="bg-green-100 text-green-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-green-200 transition">
-        <FiTwitch className="text-2xl" />
-      </button>
-      <button className="bg-red-100 text-red-600 flex items-center justify-center w-12 h-12 rounded-lg shadow-md hover:bg-red-200 transition">
-        <FaRegTimesCircle className="text-2xl" />
-      </button>
-    </div>
-  </footer>
-);
-
-export default InterviewPage;
