@@ -31,8 +31,8 @@ export default function InterviewPage() {
     const fetchInterviews = async (userId) => {
         try {
             const res = await axios.get(`/api/interview?userId=${userId}`);
-            setInterviews(res.data);
-            getInterviewStats(); // Update stats after fetching interviews
+            setInterviews(res.data.interviews);
+            getInterviewStats();
         } catch (error) {
             console.error("Error fetching interviews:", error);
         } finally {
@@ -85,7 +85,8 @@ export default function InterviewPage() {
     };
 
     return (
-        <div className="min-h-screen flex bg-gray-50 p-6">
+        <main className="flex-1 overflow-y-auto">
+            <div className="min-h-screen flex bg-gray-50 p-6">
             {/* Main Content */}
             <div className="flex-1 pr-6">
                 {/* Welcome Message */}
@@ -243,5 +244,7 @@ export default function InterviewPage() {
                 </div>
             </CreateInterview>
         </div>
+        </main>
+        
     );
 }

@@ -1,17 +1,23 @@
 'use client';
-import React, { useState, useEffect, useCallback, useRef } from "react";
-
-import Image from "next/image";
+import React, { useState, useEffect, useCallback, useRef, use } from "react";
 import { initializeSocket } from "@/lib/socket";
 import { getSession } from "next-auth/react";
 import ParticipantCard from "@/components/interview/ParticipantCard";
 import FooterControls from "@/components/interview/FooterControls";
 import ConversationBubble from "@/components/interview/ConversationBubble";
+import Permissions from "@/components/modal/Permissions";
+import axios from "axios";
+import { useParams } from "next/navigation";
 
-function InterviewPage() {
+function OnInterviewPage( ) {
+  const params = useParams();
+  // State
   const [socket, setSocket] = useState(null);
   const [userId, setUser] = useState('');
   const [questions, setQuestions] = useState([]);
+  const [interview, setInterview] = useState(null);
+  const [isInterviewOngoing, setIsInterviewOngoing] = useState(false);
+  const [isPermissionModalOpen, setIsPermissionModalOpen] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [leftPanelWidth, setLeftPanelWidth] = useState(75);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
@@ -29,29 +35,35 @@ function InterviewPage() {
   const videoRef = useRef(null);
   const isRecognitionActive = useRef(false);
 
-  // Initialize Socket connection
   useEffect(() => {
-    const newSocket = initializeSocket(userId);
-    setSocket(newSocket);
-    newSocket.connect();
+    if (!params?.id) return;
+    if(isPermissionModalOpen) return;
 
-    return () => {
-      newSocket.disconnect();
-    };
-  }, [userId]);
+    const fetchQuestions = async () => {
+      const res = await axios.get(`/api/questions/${params.id}`);
+      if(res.data.question){
+        setQuestions(res.data.question)
+      }
+      else{
+        console.log('generate question')
+      }
+      
+    }
+    fetchQuestions();
+  }, [params.id, isPermissionModalOpen]);
 
   // Socket event handlers
   useEffect(() => {
     if (!socket) return;
 
     const handleQuestion = (question) => {
-      setQuestions(prev => [...prev, question]);
+      //setQuestions(prev => [...prev, question]);
       setCurrentQuestionIndex(prev => prev + 1);
       setIsLoadingQuestions(false);
     };
 
     const handleResume = (session) => {
-      setQuestions(session.questions);
+      //setQuestions(session.questions);
       setCurrentQuestionIndex(session.index);
       setConversationHistory(session.answers.map(answer => ({
         speaker: "You",
@@ -228,32 +240,9 @@ function InterviewPage() {
     }
   }, [initializeSpeechRecognition]);
 
-  // Panel resizing logic
-  const handlePanelResize = {
-    start: () => setIsResizingPanel(true),
-    move: (e) => {
-      if (!isResizingPanel) return;
-      const newWidth = (e.clientX / window.innerWidth) * 100;
-      setLeftPanelWidth(Math.min(Math.max(newWidth, 35), 80));
-    },
-    end: () => setIsResizingPanel(false)
-  };
+  
 
-  useEffect(() => {
-    const handleMouseMove = (e) => handlePanelResize.move(e);
-    const handleMouseUp = () => handlePanelResize.end();
-
-    if (isResizingPanel) {
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-    }
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [isResizingPanel, handlePanelResize]);
-
+  
   // Handle interview completion
   const handleFinishInterview = () => {
     if (interviewStatus === "completed") return;
@@ -279,11 +268,38 @@ function InterviewPage() {
     });
   };
 
+  // Panel resizing logic
+  const handlePanelResize = {
+    start: () => setIsResizingPanel(true),
+    move: (e) => {
+      if (!isResizingPanel) return;
+      const newWidth = (e.clientX / window.innerWidth) * 100;
+      setLeftPanelWidth(Math.min(Math.max(newWidth, 35), 80));
+    },
+    end: () => setIsResizingPanel(false)
+  };
+
+  // Scroll to bottom on new message
+  useEffect(() => {
+    const handleMouseMove = (e) => handlePanelResize.move(e);
+    const handleMouseUp = () => handlePanelResize.end();
+
+    if (isResizingPanel) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingPanel, handlePanelResize]);
+
   return (
-    <>
-    <main className="flex-grow flex overflow-hidden w-full" style={{ height: 'calc(100vh - 8rem)' }}>
+    <main className="h-full">
+    <div style={{ height: 'calc(100vh - 8.6rem)' }} className=" flex w-full" >
       {/* Participants Panel */}
-      <div style={{ width: `${leftPanelWidth}%` }} className="bg-slate-200 flex items-center p-4 gap-4">
+      <div style={{ width: `${leftPanelWidth}%` }} className=" flex items-center p-4 gap-4">
         <ParticipantCard
           role="Interviewer"
           isSpeaking={isInterviewerSpeaking}
@@ -301,9 +317,8 @@ function InterviewPage() {
       <div className="w-2 cursor-col-resize bg-gray-600" onMouseDown={handlePanelResize.start} />
       
       {/* Conversation Panel */}
-      <div style={{ width: `${100 - leftPanelWidth}%` }} className="bg-slate-200 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-4 pt-16 space-y-4">
-          <div className="p-4 w-full shadow-md bg-green-50 text-green-500 fixed -m-4 -mt-16">Transcript</div>
+      <div style={{ width: `${100 - leftPanelWidth}%` }} className="flex flex-col">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {conversationHistory.map((entry, index) => (
             <ConversationBubble
               key={index}
@@ -314,17 +329,21 @@ function InterviewPage() {
           <div ref={messagesEndRef} />
         </div>
       </div>
-    </main>
+    </div>
     <FooterControls
-      noOfQuestion={questions.length}
+      noOfQuestion={questions?.length}
       currentQuestionIndex={currentQuestionIndex}
       isIntervieweeSpeaking={isIntervieweeSpeaking}
       setIsIntervieweeSpeaking={toggleMicrophone}
       onFinish={handleFinishInterview}
       interviewStatus={interviewStatus}
     />
-    </>
+    <Permissions 
+      isOpen={isPermissionModalOpen}
+      onClose={() => setIsPermissionModalOpen(false)}
+    />
+    </main>
   );
 }
 
-export default InterviewPage;
+export default OnInterviewPage;

@@ -6,10 +6,12 @@ const InterviewSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
     },
     topic: {
       type: String,
       required: true,
+      trim: true,
     },
     level: {
       type: String,
@@ -20,9 +22,7 @@ const InterviewSchema = new mongoose.Schema(
       type: Date,
       required: true,
       validate: {
-        validator: function (v) {
-          return v > new Date();
-        },
+        validator: (v) => v > Date.now(),
         message: "Interview date must be in the future",
       },
     },
@@ -35,38 +35,37 @@ const InterviewSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Pre-save hook to update status
 InterviewSchema.pre("save", function (next) {
-  const now = new Date();
-  const interviewDate = new Date(this.date);
+  const now = Date.now();
+  const interviewDate = new Date(this.date).getTime();
 
   if (interviewDate <= now && this.status === "upcoming") {
     this.status = "ongoing";
   }
-  if (interviewDate < now - 1 * 60 * 60 * 1000 && this.status === "ongoing") {
+  if (interviewDate < now - 60 * 60 * 1000 && this.status === "ongoing") {
     this.status = "completed";
   }
   next();
 });
 
+// Static method to update all interview statuses efficiently
 InterviewSchema.statics.updateStatuses = async function () {
-  const now = new Date();
+  const now = Date.now();
 
-  // Update status to ongoing
   await this.updateMany(
     { status: "upcoming", date: { $lte: now } },
-    { status: "ongoing" }
+    { $set: { status: "ongoing" } }
   );
 
-  // Update status to completed if interview is older than 1 hour
   await this.updateMany(
-    { status: "ongoing", date: { $lt: now - 1 * 60 * 60 * 1000 } },
-    { status: "completed" }
+    { status: "ongoing", date: { $lt: now - 60 * 60 * 1000 } },
+    { $set: { status: "completed" } }
   );
 
-  // Update status to missed if interview is in the past
   await this.updateMany(
-    { status: "upcoming", date: { $lt: now } },
-    { status: "missed" }
+    { status: "upcoming", date: { $lt: now - 60 * 60 * 1000 } },
+    { $set: { status: "missed" } }
   );
 };
 

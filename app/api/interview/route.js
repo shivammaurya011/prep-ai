@@ -1,4 +1,4 @@
-import connectDB from "@/lib/db"; 
+import connectDB from "@/lib/db";
 import Interview from "@/models/Interview";
 
 export async function GET(req) {
@@ -14,7 +14,7 @@ export async function GET(req) {
 
     const interviews = await Interview.find({ user: userId });
 
-    return Response.json(interviews);
+    return Response.json({ message: "Interviews fetched", interviews }, { status: 200 }); // Explicit 200
   } catch (error) {
     return Response.json({ message: "Error fetching interviews", error: error.message }, { status: 500 });
   }
@@ -26,7 +26,7 @@ export async function POST(req) {
     
     const { userId, topic, level, date } = await req.json();
 
-    if (!userId || !topic, !level || !date) {
+    if (!userId || !topic || !level || !date) {
       return Response.json({ message: "All fields are required" }, { status: 400 });
     }
 
@@ -34,7 +34,7 @@ export async function POST(req) {
 
     await interview.save();
 
-    return Response.json({ message: "Interview Created", interview });
+    return Response.json({ message: "Interview Created", interview }, { status: 201 }); // Explicit 201 for creation
   } catch (error) {
     return Response.json({ message: "Error creating interview", error: error.message }, { status: 500 });
   }

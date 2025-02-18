@@ -1,13 +1,15 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  emailVerified: Date,
-  password: String,
-  image: String,
-  interviews: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Interview' }],
-  createdAt: { type: Date, default: Date.now }
-});
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    email: { type: String, unique: true, required: true, trim: true },
+    emailVerified: { type: Date },
+    password: { type: String, required: true },
+    image: { type: String, trim: true },
+    interviews: [{ type: mongoose.Schema.Types.ObjectId, ref: "Interview" }],
+  },
+  { timestamps: true }
+);
 
-export default mongoose.models.User || mongoose.model('User', userSchema);
+export default mongoose.models.User || mongoose.model("User", userSchema);

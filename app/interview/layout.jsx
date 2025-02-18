@@ -117,7 +117,7 @@ export default function InterviewLayout({ children }) {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <>{children}</>
     </div>
   );
 }
